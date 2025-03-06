@@ -37,6 +37,17 @@ class Borrowing(db.Model):
     due_date = db.Column(db.DateTime)
     return_date = db.Column(db.DateTime)
 
+class Review(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    book_id = db.Column(db.Integer, db.ForeignKey('book.id'), nullable=False)
+    user_id = db.Column(db.Integer, nullable=False)  # Assuming user IDs are stored
+    rating = db.Column(db.Integer, nullable=False)  # Rating from 1 to 5
+    review = db.Column(db.Text, nullable=True)  # Optional review text
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+    book = db.relationship('Book', backref=db.backref('reviews', lazy=True))
+
+
 # Routes
 
 # Get all users
@@ -190,15 +201,12 @@ def borrow_book():
 # Get borrowed books by user ID
 @app.route('/borrowed-books/<int:user_id>', methods=['GET'])
 def get_borrowed_books(user_id):
-    # Query the Borrowing table to find all active borrowings for the user
     borrowings = Borrowing.query.filter_by(user_id=user_id, return_date=None).all()
     
     if not borrowings:
-        return jsonify({"message": "No books borrowed"}), 200  # Return a message if no books are found
+        return jsonify({"message": "No books borrowed"}), 200  
 
-    # List to store borrowed books
     borrowed_books = []
-    
     for borrowing in borrowings:
         book = Book.query.get(borrowing.book_id)
         if book:
@@ -241,23 +249,68 @@ def search_books_by_title():
     ]), 200
 
 
-
-# Return a book
-@app.route('/return', methods=['POST'])
-def return_book():
+# Add a review for a book
+@app.route('/books/<int:book_id>/review', methods=['POST'])
+def add_review(book_id):
     data = request.get_json()
-    user_id = data['user_id']
-    book_id = data['book_id']
 
-    borrowing = Borrowing.query.filter_by(user_id=user_id, book_id=book_id, return_date=None).first()
-    if borrowing:
-        borrowing.return_date = datetime.now()
-        book = Book.query.get(book_id)
-        book.available_copies += 1
-        db.session.commit()
-        return jsonify({"message": "Book returned successfully!"}), 200
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({"error": "Book not found"}), 404
+
+    # Create and add the new review
+    new_review = Review(
+        book_id=book_id,
+        user_id=data['user_id'],
+        rating=data['rating'],
+        review=data['review']
+    )
+    db.session.add(new_review)
+    db.session.commit()
+
+    # Recalculate the book's average rating
+    reviews = Review.query.filter_by(book_id=book_id).all()
+    if reviews:
+        avg_rating = sum(review.rating for review in reviews) / len(reviews)
     else:
-        return jsonify({"message": "No active borrowing found!"}), 400
+        avg_rating = 0  # In case all reviews get deleted
+
+    # Update the book's rating
+    book.rating = round(avg_rating, 2)  # Keep it to 2 decimal places
+    db.session.commit()
+
+    return jsonify({"message": "Review added successfully!", "new_average_rating": book.rating}), 201
+
+
+
+# Get reviews for a book
+@app.route('/books/<int:book_id>/reviews', methods=['GET'])
+def get_reviews(book_id):
+    book = Book.query.get(book_id)
+
+    if not book:
+        return jsonify({"error": "Book not found"}), 404
+
+    reviews = Review.query.filter_by(book_id=book_id).all()
+    if not reviews:
+        return jsonify({"message": "No reviews yet for this book."}), 200
+
+    avg_rating = sum([review.rating for review in reviews]) / len(reviews)
+
+    return jsonify({
+        "book_id": book_id,
+        "title": book.title,
+        "average_rating": round(avg_rating, 2),
+        "reviews": [
+            {
+                "user_id": review.user_id,
+                "rating": review.rating,
+                "review": review.review,
+                "timestamp": review.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            for review in reviews
+        ]
+    })
 
 
 # Rate a book
@@ -270,6 +323,57 @@ def rate_book():
     book.rating = data['rating']
     db.session.commit()
     return jsonify({"message": "Rating updated!"}), 200
+
+
+# Return a book and update the borrowed books list
+@app.route('/return', methods=['POST'])
+def return_book():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    book_id = data.get('book_id')
+
+    # Find the active borrowing record
+    borrowing = Borrowing.query.filter_by(user_id=user_id, book_id=book_id, return_date=None).first()
+    
+    if not borrowing:
+        return jsonify({"message": "No active borrowing found for this book!"}), 400
+    
+    # Update borrowing record with return date
+    borrowing.return_date = datetime.now()
+
+    # Update book's available copies
+    book = Book.query.get(book_id)
+    if book:
+        book.available_copies += 1
+
+    db.session.commit()
+
+    return jsonify({"message": "Book returned successfully!"}), 200
+
+
+# Get all returned books by user ID
+@app.route('/returned-books/<int:user_id>', methods=['GET'])
+def get_returned_books(user_id):
+    returned_books = Borrowing.query.filter_by(user_id=user_id).filter(Borrowing.return_date.isnot(None)).all()
+    
+    if not returned_books:
+        return jsonify({"message": "No books returned"}), 200  
+
+    books_list = []
+    for borrowing in returned_books:
+        book = Book.query.get(borrowing.book_id)
+        if book:
+            books_list.append({
+                "borrow_id": borrowing.id,
+                "book_id": book.id,
+                "title": book.title,
+                "author": book.author,
+                "genre": book.genre,
+                "borrow_date": borrowing.borrow_date.strftime('%Y-%m-%d %H:%M:%S'),
+                "return_date": borrowing.return_date.strftime('%Y-%m-%d %H:%M:%S')
+            })
+    
+    return jsonify(books_list), 200
 
 
 # Run the app
