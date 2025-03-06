@@ -97,25 +97,44 @@ def get_book(book_id):
 @app.route('/books', methods=['POST'])
 def add_book():
     data = request.get_json()
-    
-    # Check if a book with the same ISBN already exists
-    existing_book = Book.query.filter_by(isbn=data['isbn']).first()
-    if existing_book:
-        return jsonify({"error": "Book with this ISBN already exists!"}), 400
-    
-    # Create a new book entry
-    new_book = Book(
-        isbn=data['isbn'],
-        title=data['title'],
-        author=data['author'],
-        genre=data['genre'],
-        copies=data['copies'],
-        available_copies=data['copies']
-    )
-    
-    db.session.add(new_book)
+
+    # Debug: Print the received data
+    print("Received data:", data)
+
+    if isinstance(data, list):
+        # Handle multiple books
+        for book_data in data:
+            existing_book = Book.query.filter_by(isbn=book_data['isbn']).first()
+            if existing_book:
+                return jsonify({"error": f"Book with ISBN {book_data['isbn']} already exists!"}), 400
+
+            new_book = Book(
+                isbn=book_data['isbn'],
+                title=book_data['title'],
+                author=book_data['author'],
+                genre=book_data['genre'],
+                copies=book_data['copies'],
+                available_copies=book_data['copies']
+            )
+            db.session.add(new_book)
+    else:
+        # Handle single book
+        existing_book = Book.query.filter_by(isbn=data['isbn']).first()
+        if existing_book:
+            return jsonify({"error": f"Book with ISBN {data['isbn']} already exists!"}), 400
+
+        new_book = Book(
+            isbn=data['isbn'],
+            title=data['title'],
+            author=data['author'],
+            genre=data['genre'],
+            copies=data['copies'],
+            available_copies=data['copies']
+        )
+        db.session.add(new_book)
+
     db.session.commit()
-    return jsonify({"message": "Book added successfully!"}), 201
+    return jsonify({"message": "Book(s) added successfully!"}), 201 
 
 
 # Update a book
