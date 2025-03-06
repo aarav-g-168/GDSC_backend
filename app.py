@@ -97,6 +97,13 @@ def get_book(book_id):
 @app.route('/books', methods=['POST'])
 def add_book():
     data = request.get_json()
+    
+    # Check if a book with the same ISBN already exists
+    existing_book = Book.query.filter_by(isbn=data['isbn']).first()
+    if existing_book:
+        return jsonify({"error": "Book with this ISBN already exists!"}), 400
+    
+    # Create a new book entry
     new_book = Book(
         isbn=data['isbn'],
         title=data['title'],
@@ -105,6 +112,7 @@ def add_book():
         copies=data['copies'],
         available_copies=data['copies']
     )
+    
     db.session.add(new_book)
     db.session.commit()
     return jsonify({"message": "Book added successfully!"}), 201
@@ -374,6 +382,45 @@ def get_returned_books(user_id):
             })
     
     return jsonify(books_list), 200
+
+
+# Suggest books by genre with optional filters
+@app.route('/books/suggest_by_genre', methods=['GET'])
+def suggest_books_by_genre():
+    genre = request.args.get('genre')  # Get the genre from query parameters
+    min_rating = request.args.get('min_rating', type=float)  # Optional: Minimum rating
+    available_only = request.args.get('available_only', default=False, type=lambda v: v.lower() == 'true')  # Optional: Available copies only
+
+    if not genre:
+        return jsonify({"error": "Genre parameter is required"}), 400
+
+    # Base query
+    query = Book.query.filter(Book.genre.ilike(f"%{genre}%"))
+
+    # Apply optional filters
+    if min_rating is not None:
+        query = query.filter(Book.rating >= min_rating)
+    if available_only:
+        query = query.filter(Book.available_copies > 0)
+
+    # Execute the query
+    books = query.all()
+
+    if not books:
+        return jsonify({"message": f"No books found in the genre: {genre}"}), 404
+
+    # Return the list of books
+    return jsonify([
+        {
+            "id": book.id,
+            "title": book.title,
+            "author": book.author,
+            "genre": book.genre,
+            "available_copies": book.available_copies,
+            "rating": book.rating
+        }
+        for book in books
+    ]), 200
 
 
 # Run the app
